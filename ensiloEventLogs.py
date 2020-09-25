@@ -29,9 +29,17 @@ class integration(object):
     }
 
     JSON_field_mappings = {
-        'date' : 'timestamp',
         'eventId' : 'event_id',
-        'processPath' : 'process_path'
+        'processPath' : 'process_path',
+        'destinations' : 'ip_dest',
+        'loggedUsers' : 'username',
+        'macAddresses' : 'mac_address',
+        'collectorGroup' : 'group',
+        'rules' : 'rule_name',
+        'ip' : 'client_ip',
+        'id' : 'client_info',
+        'device' : 'client_hostname',
+        'operatingSystem' : 'os_type',
     }
 
     def ensilo_basicAuth(self):
@@ -54,22 +62,23 @@ class integration(object):
         params = {'lastSeenFrom':self.last_run, 'lastSeenTo':self.current_run}
         response = self.ensilo_request('/management-rest/events/list-events', params = params)
         events = response.json()
+        extra_events = []
         for event in events:
-            if 'collectors' in event.keys():
-                if len(event['collectors']) == 1:
-                    event['collector_lastSeen'] = event['collectors'][0]['lastSeen']
-                    event['collector_id'] = event['collectors'][0]['id']
-                    event['device'] = event['collectors'][0]['device']
-                    event['operatingSystem'] = event['collectors'][0]['operatingSystem']
-                    event['macAddresses'] = event['collectors'][0]['macAddresses']
-                    event['ip'] = event['collectors'][0]['ip']
-                    event['collectorGroup'] = event['collectors'][0]['collectorGroup']
-                    del event['collectors']
-            if 'loggedUsers' in event.keys() and event['loggedUsers'] != None:
-                if len(event['loggedUsers']) == 1:
-                    event['user_name'] = event['loggedUsers'][0]
-                    del event['loggedUsers']
-        return events
+            event['message'] = "Event ID: " + str(event['eventId']) + " Process: " + event['process'] + " Action: " + event['action']
+            event['category'] = "events"
+            event['timestamp'] = event['lastSeen']
+            if 'collectors' in event.keys() and event['collectors'] != None:
+                c_events = event['collectors']
+                for c_event in c_events:
+                    c_event['category'] = "events"
+                    c_event['message'] = "Event ID: " + str(event['eventId']) + " collectors event"
+                    c_event['eventId'] = event['eventId']
+                    c_event['timestamp'] = event['lastSeen']
+                    extra_events.append(c_event)
+                del event['collectors']
+
+        total_events = events + extra_events
+        return total_events
 
     def ensilo_getSystemEvents(self):
         params = {'fromDate':self.last_run, 'toDate':self.current_run}
@@ -96,9 +105,9 @@ class integration(object):
             self.ds.log('ERROR', "Exception in ensilo_request: {0}".format(str(e)))
             return None
         if not response or response.status_code != 200:
-            self.ds.log('WARNING', 
-                    "Received unexpected " + str(response) + " response from enSilo Server {0}.".format(url))
-            return None
+            self.ds.log('ERROR', "Received unexpected " + str(response) + " response from enSilo Server {0}.".format(url))
+            self.ds.log('ERROR', "Exiting due to unexpected response.")
+            sys.exit(0)
         return response
 
 
@@ -143,10 +152,14 @@ class integration(object):
         else:
             self.ds.log('INFO', "Sending {0} event logs".format(len(events)))
             for log in events:
+                '''
+                print(log)
+                print(log['process'])
                 log['message'] = "Event ID: " + str(log['eventId']) + " Process: " + log['process'] + " Action: " + log['action']
                 log['category'] = "events"
                 log['timestamp'] = log['lastSeen']
-                self.ds.writeJSONEvent(log, JSON_field_mappings = self.JSON_field_mappings)
+                '''
+                self.ds.writeJSONEvent(log, JSON_field_mappings = self.JSON_field_mappings, flatten = False)
 
         if system_events == None:
             self.ds.log('INFO', "There are no system event logs to send")
