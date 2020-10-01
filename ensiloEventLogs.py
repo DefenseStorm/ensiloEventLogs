@@ -8,6 +8,7 @@ import json
 import requests
 import time
 from datetime import datetime
+import pytz
 
 from six import PY2
 
@@ -60,20 +61,26 @@ class integration(object):
 
     def ensilo_getEvents(self):
         params = {'lastSeenFrom':self.last_run, 'lastSeenTo':self.current_run}
+        #params = None
         response = self.ensilo_request('/management-rest/events/list-events', params = params)
         events = response.json()
         extra_events = []
         for event in events:
             event['message'] = "Event ID: " + str(event['eventId']) + " Process: " + event['process'] + " Action: " + event['action']
             event['category'] = "events"
-            event['timestamp'] = event['lastSeen']
+            try:
+                dt_timestamp = datetime.strptime(event['lastSeen'], self.time_format)
+                dt_timestamp = self.pytz_timezone.localize(dt_timestamp)
+                event['timestamp'] = dt_timestamp.isoformat()
+            except Exception as E:
+                self.ds.log('ERROR', "converting timestamp in event")
             if 'collectors' in event.keys() and event['collectors'] != None:
                 c_events = event['collectors']
                 for c_event in c_events:
                     c_event['category'] = "events"
                     c_event['message'] = "Event ID: " + str(event['eventId']) + " collectors event"
                     c_event['eventId'] = event['eventId']
-                    c_event['timestamp'] = event['lastSeen']
+                    c_event['timestamp'] = event['timestamp']
                     extra_events.append(c_event)
                 del event['collectors']
 
@@ -119,11 +126,20 @@ class integration(object):
         self.state_dir = self.ds.config_get('ensilo', 'state_dir')
         self.last_run = self.ds.get_state(self.state_dir)
         self.time_offset = int(self.ds.config_get('ensilo', 'time_offset'))
+        self.timezone = self.ds.config_get('ensilo', 'timezone')
+        self.pytz_timezone = pytz.timezone(self.timezone)
         self.time_format = "%Y-%m-%d %H:%M:%S"
         current_time = time.time()
+        utc_tz = pytz.timezone("UTC")
+        self.tz_offset = self.pytz_timezone.localize(datetime.utcfromtimestamp(current_time)).strftime("%z")
         if self.last_run == None:
-            self.last_run = (datetime.utcfromtimestamp(60 * ((current_time - (self.time_offset * 10000)) // 60))).strftime(self.time_format)
-        self.current_run = (datetime.utcfromtimestamp(current_time - self.time_offset)).strftime(self.time_format)
+            dt_last_run = datetime.utcfromtimestamp(60 * ((current_time - ((self.time_offset + 900) * 60)) // 60))
+            dt_last_run = utc_tz.localize(dt_last_run)
+            dt_last_run = dt_last_run.astimezone(self.pytz_timezone)
+            self.last_run = dt_last_run.strftime(self.time_format)
+        dt_current_run = utc_tz.localize(datetime.utcfromtimestamp(current_time - (self.time_offset * 60)))
+        dt_current_run = dt_current_run.astimezone(self.pytz_timezone)
+        self.current_run = dt_current_run.strftime(self.time_format)
 
         if self.auth_method == 'basic':
             self.token = None
@@ -143,22 +159,17 @@ class integration(object):
             self.ds.log('ERROR', "Invalid Configuration or auth failed.  No token available")
             return None
 
+
         events = self.ensilo_getEvents()
 
-        system_events = self.ensilo_getSystemEvents()
+        #system_events = self.ensilo_getSystemEvents()
+        system_events = None
 
         if events == None:
             self.ds.log('INFO', "There are no event logs to send")
         else:
             self.ds.log('INFO', "Sending {0} event logs".format(len(events)))
             for log in events:
-                '''
-                print(log)
-                print(log['process'])
-                log['message'] = "Event ID: " + str(log['eventId']) + " Process: " + log['process'] + " Action: " + log['action']
-                log['category'] = "events"
-                log['timestamp'] = log['lastSeen']
-                '''
                 self.ds.writeJSONEvent(log, JSON_field_mappings = self.JSON_field_mappings, flatten = False)
 
         if system_events == None:
