@@ -162,8 +162,7 @@ class integration(object):
 
         events = self.ensilo_getEvents()
 
-        #system_events = self.ensilo_getSystemEvents()
-        system_events = None
+        system_events = self.ensilo_getSystemEvents()
 
         if events == None:
             self.ds.log('INFO', "There are no event logs to send")
